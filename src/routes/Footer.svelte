@@ -2,6 +2,9 @@
 	import { darkMode } from '../lib/stores';
 	import { FontAwesomeIcon } from '@fortawesome/svelte-fontawesome';
 	import { faHome, faCog, faPlus } from '@fortawesome/free-solid-svg-icons';
+	import { createEventDispatcher } from 'svelte';
+
+	const dispatch = createEventDispatcher();
 
 	let isDarkMode = false;
 
@@ -10,8 +13,7 @@
 	});
 
 	function handleClick(action) {
-		// Implement the action for each button
-		console.log(`Clicked: ${action}`);
+		dispatch('buttonClick', action);
 	}
 </script>
 

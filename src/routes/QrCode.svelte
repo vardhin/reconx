@@ -1,22 +1,12 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, afterUpdate } from 'svelte';
 	import * as QRCode from 'qrcode';
 
-	let qrString = '';
+	export let roomId = ''; // Accept roomId as a prop
+
 	let qrCodeDataUrl = '';
 
-	// Function to generate a random 32-character string
-	function generateRandomString() {
-		const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-		let result = '';
-		for (let i = 0; i < 32; i++) {
-			const randomIndex = Math.floor(Math.random() * charset.length);
-			result += charset[randomIndex];
-		}
-		return result;
-	}
-
-	// Generate QR code from the string
+	// Generate QR code from the roomId
 	async function generateQRCode(text) {
 		try {
 			const qrDataUrl = await QRCode.toDataURL(text);
@@ -26,16 +16,33 @@
 		}
 	}
 
-	// When the component is mounted, generate the string and QR code
-	onMount(() => {
-		qrString = generateRandomString();
-		generateQRCode(qrString);
-	});
+	// Generate QR code when component mounts and when roomId changes
+	$: {
+		if (roomId) {
+			generateQRCode(roomId);
+		}
+	}
 </script>
 
-<div class="qr-container">
-	<p>{qrString}</p>
+<div class="qr-code-container">
 	{#if qrCodeDataUrl}
-		<img src={qrCodeDataUrl} alt="QR Code" />
+		<img src={qrCodeDataUrl} alt="QR Code" class="qr-code-image" />
+	{:else}
+		<p>Generating QR Code...</p>
 	{/if}
 </div>
+
+<style>
+	.qr-code-container {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		width: 100%;
+		height: 100%;
+	}
+
+	.qr-code-image {
+		max-width: 100%;
+		max-height: 100%;
+	}
+</style>

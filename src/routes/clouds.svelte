@@ -75,6 +75,8 @@
 		animate(deltaTime: number): boolean {
 			this.left += this.speed * deltaTime * 0.35;
 			this.opacity = Math.min(this.opacity + 0.005 * deltaTime, 1);
+			// Round off the left position to four decimal places
+			this.left = Math.round(this.left * 10000) / 10000;
 			return this.left <= 120;
 		}
 	}
@@ -84,7 +86,7 @@
 	}
 
 	function spawnCloud(): void {
-		clouds = [...clouds, new Cloud()];
+			clouds = [...clouds, new Cloud()];
 	}
 
 	function gradualCloudSpawn(count = MAX_CLOUDS, minInterval = 3000, maxInterval = 10000): void {
@@ -217,6 +219,8 @@
 		box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
 		transition: transform 0.3s ease, opacity 2s ease;
 		transform: translateZ(0);
+
+		
 	}
 
 	.cloud::before,
@@ -239,5 +243,7 @@
 		height: 120px;
 		top: -60px;
 		right: 60px;
+
+		
 	}
 </style>
