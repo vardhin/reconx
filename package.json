@@ -1,0 +1,53 @@
+{
+	"name": "recon",
+	"version": "0.0.1",
+	"private": true,
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"test": "playwright test",
+		"lint": "prettier --check . && eslint .",
+		"format": "prettier --write ."
+	},
+	"devDependencies": {
+		"@playwright/test": "^1.28.1",
+		"@sveltejs/adapter-auto": "^3.2.5",
+		"@sveltejs/kit": "^2.0.0",
+		"@sveltejs/vite-plugin-svelte": "^3.0.0",
+		"@tsconfig/svelte": "^5.0.4",
+		"@types/eslint": "^9.6.0",
+		"eslint": "^9.0.0",
+		"eslint-config-prettier": "^9.1.0",
+		"eslint-plugin-svelte": "^2.36.0",
+		"globals": "^15.0.0",
+		"prettier": "^3.1.1",
+		"prettier-plugin-svelte": "^3.1.2",
+		"svelte": "^4.2.7",
+		"svelte-preprocess": "^6.0.3",
+		"typescript": "^5.6.3",
+		"vite": "^5.0.3"
+	},
+	"type": "module",
+	"dependencies": {
+		"@capacitor/android": "^6.1.2",
+		"@capacitor/cli": "^6.1.2",
+		"@capacitor/core": "^6.1.2",
+		"@capacitor/filesystem": "^6.0.1",
+		"@capacitor/ios": "^6.1.2",
+		"@fontsource/orbitron": "^5.1.0",
+		"@fortawesome/fontawesome-free": "^6.6.0",
+		"@fortawesome/fontawesome-svg-core": "^6.6.0",
+		"@fortawesome/free-solid-svg-icons": "^6.6.0",
+		"@fortawesome/svelte-fontawesome": "^0.2.2",
+		"@smui/button": "^7.0.0",
+		"@smui/paper": "^7.0.0",
+		"@smui/textfield": "^7.0.0",
+		"@sveltejs/adapter-static": "^3.0.5",
+		"qrcode": "^1.5.4",
+		"smelte": "^1.1.8",
+		"svelte-material-ui": "^7.0.0",
+		"svelte-motion": "^0.12.2",
+		"svelte-routing": "^2.13.0"
+	}
+}

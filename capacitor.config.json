@@ -1,0 +1,6 @@
+{
+	"appId": "com.vardhin.recon",
+	"appName": "recon",
+	"webDir": "build",
+	"bundledWebRuntime": false
+}
