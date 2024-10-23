@@ -9,6 +9,7 @@ export interface ChatMessage {
   senderID: string;
   timestamp: number;
   acknowledgement: boolean;
+  targetID?: string; // New field for action messages
 }
 
 class ChatManager {
@@ -106,14 +107,26 @@ class ChatManager {
         await this.appendMessageToHistory(message);
         break;
       case 'delete':
-        await this.deleteMessageById(message.objectID);
+        if (message.targetID) {
+          await this.deleteMessageById(message.targetID);
+        } else {
+          console.warn('Delete action received without targetID');
+        }
         break;
       case 'edit':
-        const [newText, editId] = message.text.split('$');
-        await this.editMessageById(newText, editId);
+        if (message.text && message.objectID) {
+          // Assuming edit messages contain the new text and the objectID of the message to edit
+          await this.editMessageById(message.text, message.objectID);
+        } else {
+          console.warn('Edit action received with incomplete data');
+        }
         break;
       case 'acknowledgment':
-        await this.acknowledgeMessageById(message.objectID);
+        if (message.targetID) {
+          await this.acknowledgeMessageById(message.targetID);
+        } else {
+          console.warn('Acknowledge action received without targetID');
+        }
         break;
       default:
         console.warn(`Unknown message type: ${message.type}`);

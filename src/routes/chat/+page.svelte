@@ -99,33 +99,45 @@
       }
     }
   
-    async function deleteMessage(objectID: string) {
-      if (chatManager) {
+    async function deleteMessage(targetObjectID: string) {
+      if (chatManager && targetObjectID.trim()) {
         const message: ChatMessage = {
-          text: '',
-          objectID: objectID,
+          text: '', // Optional: You can include a reason or context if needed
+          objectID: generateUniqueId(), // Ensure a unique ID for this action
           type: 'delete',
           senderID: publicKeyA,
           timestamp: Date.now(),
           acknowledgement: false,
+          targetID: targetObjectID, // Specify which message to delete
         };
         console.log('Deleting message:', message);
-        await chatManager.gun.get(chatManager.roomId).set(message);
+        try {
+          await chatManager.gun.get(chatManager.roomId).set(message);
+          console.log('Delete action sent successfully');
+        } catch (error) {
+          console.error('Error sending delete action:', error);
+        }
       }
     }
   
-    async function acknowledgeMessage(objectID: string) {
-      if (chatManager) {
+    async function acknowledgeMessage(targetObjectID: string) {
+      if (chatManager && targetObjectID.trim()) {
         const message: ChatMessage = {
-          text: '',
-          objectID: objectID,
+          text: '', // Optional: Additional info if needed
+          objectID: generateUniqueId(), // Ensure a unique ID for this action
           type: 'acknowledgment',
           senderID: publicKeyA,
           timestamp: Date.now(),
           acknowledgement: false,
+          targetID: targetObjectID, // Specify which message to acknowledge
         };
         console.log('Acknowledging message:', message);
-        await chatManager.gun.get(chatManager.roomId).set(message);
+        try {
+          await chatManager.gun.get(chatManager.roomId).set(message);
+          console.log('Acknowledge action sent successfully');
+        } catch (error) {
+          console.error('Error sending acknowledge action:', error);
+        }
       }
     }
   
@@ -148,16 +160,18 @@
       {:else}
         <ul>
           {#each messages as message}
-            <li>
-              <strong>{message.senderID}:</strong> {message.text}
-              <small>{new Date(message.timestamp).toLocaleString()}</small>
-              {#if message.acknowledgement}
-                <span class="ack">(Acknowledged)</span>
-              {/if}
-              <button on:click={() => acknowledgeMessage(message.objectID)}>Acknowledge</button>
-              <button on:click={() => deleteMessage(message.objectID)}>Delete</button>
-              <button on:click={() => { editMessageId = message.objectID; editMessageText = message.text; }}>Edit</button>
-            </li>
+            {#if message.type === 'message'}
+              <li>
+                <strong>{message.senderID}:</strong> {message.text}
+                <small>{new Date(message.timestamp).toLocaleString()}</small>
+                {#if message.acknowledgement}
+                  <span class="ack">(Acknowledged)</span>
+                {/if}
+                <button on:click={() => acknowledgeMessage(message.objectID)}>Acknowledge</button>
+                <button on:click={() => deleteMessage(message.objectID)}>Delete</button>
+                <button on:click={() => { editMessageId = message.objectID; editMessageText = message.text; }}>Edit</button>
+              </li>
+            {/if}
           {/each}
         </ul>
       {/if}
@@ -223,5 +237,6 @@
     }
   </style>
   
+
 
 
