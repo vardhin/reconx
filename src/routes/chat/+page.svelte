@@ -8,7 +8,7 @@
     let roomID = 'Unknown Room';
     let publicKeyA = '';
     let publicKeyB = '';
-    let chatManager= ChatManager ;
+    let chatManager: ChatManager;
     let messages: ChatMessage[] = [];
     let newMessage = '';
     let editMessageId = '';
@@ -30,7 +30,7 @@
   
     async function initializeChat() {
       try {
-        chatManager = new ChatManager(publicKeyA, publicKeyB, publicKeyA) as any;
+        chatManager = new ChatManager(publicKeyA, publicKeyB, publicKeyA);
         console.log('ChatManager initialized:', chatManager);
   
         await fetchMessages();
@@ -71,10 +71,14 @@
           timestamp: Date.now(),
           acknowledgement: false,
         };
-        console.log('Sending message:', message);
-        await chatManager.gun.get(chatManager.roomId).set(message);
-        newMessage = '';
-        await fetchMessages();
+        console.log('Attempting to send message:', message);
+        try {
+          await chatManager.gun.get(chatManager.roomId).get(message.objectID).put(message);
+          console.log('Message sent successfully');
+          newMessage = '';
+        } catch (error) {
+          console.error('Error sending message:', error);
+        }
       }
     }
   
@@ -82,7 +86,7 @@
       if (chatManager && editMessageText.trim() && editMessageId) {
         const message: ChatMessage = {
           text: `${editMessageText}$${editMessageId}`,
-          objectID: editMessageId,
+          objectID: generateUniqueId(),
           type: 'edit',
           senderID: publicKeyA,
           timestamp: Date.now(),
@@ -90,10 +94,8 @@
         };
         console.log('Editing message:', message);
         await chatManager.gun.get(chatManager.roomId).set(message);
-        await chatManager.editMessageById(`${editMessageText}$${editMessageId}`);
         editMessageText = '';
         editMessageId = '';
-        await fetchMessages();
       }
     }
   
@@ -109,8 +111,6 @@
         };
         console.log('Deleting message:', message);
         await chatManager.gun.get(chatManager.roomId).set(message);
-        await chatManager.deleteMessageById(objectID);
-        await fetchMessages();
       }
     }
   
@@ -126,8 +126,6 @@
         };
         console.log('Acknowledging message:', message);
         await chatManager.gun.get(chatManager.roomId).set(message);
-        await chatManager.acknowledgeMessageById(objectID);
-        await fetchMessages();
       }
     }
   
@@ -225,3 +223,5 @@
     }
   </style>
   
+
+

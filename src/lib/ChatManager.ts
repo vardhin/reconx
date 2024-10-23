@@ -12,8 +12,8 @@ export interface ChatMessage {
 }
 
 class ChatManager {
-    private gun: any;
-    private roomId: string;
+    public gun: any; // Change to public
+    public roomId: string; // Change to public
     private localUserId: string;
     private chatHistoryFile: string;
     private fileContentHash: string | null = null; // To store previous file hash
@@ -24,7 +24,16 @@ class ChatManager {
         this.roomId = this.getRoomId(publicKeyA, publicKeyB);
         this.localUserId = localUserId;
         this.chatHistoryFile = `${this.roomId}.json`;
-        this.gun = Gun(); 
+        this.gun = Gun({
+            peers: [
+                'https://gun-manhattan.herokuapp.com/gun',
+                'https://gun-boston.herokuapp.com/gun',
+                'https://gun-seattle.herokuapp.com/gun',
+                'https://gun-syd.herokuapp.com/gun',
+                'https://gun-chicago.herokuapp.com/gun',
+                'https://gun-nyc.herokuapp.com/gun',
+            ]
+        }); 
         this.listenToGun();
         this.pollChatHistoryChanges(); // Start monitoring file changes
       }
@@ -100,7 +109,8 @@ class ChatManager {
         await this.deleteMessageById(message.objectID);
         break;
       case 'edit':
-        await this.editMessageById(message.text, message.objectID);
+        const [newText, editId] = message.text.split('$');
+        await this.editMessageById(newText, editId);
         break;
       case 'acknowledgment':
         await this.acknowledgeMessageById(message.objectID);
@@ -108,6 +118,7 @@ class ChatManager {
       default:
         console.warn(`Unknown message type: ${message.type}`);
     }
+    this.triggerMessagesUpdated();
   }
 
   
@@ -187,7 +198,7 @@ class ChatManager {
   }
 
   // Delete message by object ID
-  private async deleteMessageById(objectID: string) {
+  public async deleteMessageById(objectID: string) {
     const history = await this.readChatHistory();
     const updatedHistory = history.filter((msg) => msg.objectID !== objectID);
     await this.writeChatHistory(updatedHistory);
@@ -197,7 +208,7 @@ class ChatManager {
   }
 
   // Edit message by object ID
-  private async editMessageById(newText: string, objectID: string) {
+  public async editMessageById(newText: string, objectID: string) {
     const history = await this.readChatHistory();
     const message = history.find((msg) => msg.objectID === objectID);
     if (message) {
@@ -210,7 +221,7 @@ class ChatManager {
   }
 
   // Acknowledge message by object ID
-  private async acknowledgeMessageById(objectID: string) {
+  public async acknowledgeMessageById(objectID: string) {
     const history = await this.readChatHistory();
     const message = history.find((msg) => msg.objectID === objectID);
     if (message && !message.acknowledgement) {
