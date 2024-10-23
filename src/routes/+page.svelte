@@ -82,9 +82,9 @@
 	}
 </script>
 
+<NavBar title="Recon" />
 <main class="contact-screen" class:dark-mode={isDarkMode} in:fade={{ duration: 400 }}>
 	<Clouds />
-	<NavBar title="Recon" />
 	<div class="contact-list">
 		{#if visible}
 			{#each contacts as contact}
@@ -100,3 +100,11 @@
 	</div>
 	<FooterBar on:buttonClick={handleFooterClick} />
 </main>
+
+<style>
+.contact-list {
+	padding-bottom: 80px; /* Add padding to the bottom of the contact list */
+}
+
+/* ... other existing styles ... */
+</style>

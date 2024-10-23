@@ -6,7 +6,7 @@
 
 	const MAX_STARS = 50;
 	const MAX_CLOUDS = 4;
-	const FPS = 90;
+	const FPS = 60;
 	const FRAME_INTERVAL = 1000 / FPS;
 
 	let stars: Star[] = [];
@@ -16,8 +16,8 @@
 
 	class Star {
 		id: string;
-		left: number;
-		top: number;
+		x: number;
+		y: number;
 		opacity: number;
 		scale: number;
 		isShooting: boolean;
@@ -27,8 +27,8 @@
 
 		constructor() {
 			this.id = Math.random().toString(36).substring(2);
-			this.left = Math.random() * 100;
-			this.top = Math.random() * 100;
+			this.x = Math.random() * 100;
+			this.y = Math.random() * 100;
 			this.opacity = Math.random() * 0.5 + 0.5;
 			this.scale = Math.random() * 0.7 + 0.3;
 			this.isShooting = false;
@@ -39,8 +39,8 @@
 
 		animate(deltaTime: number): boolean {
 			if (this.isShooting) {
-				this.left -= this.speed * deltaTime * 0.5;
-				this.top += this.speed * deltaTime * 0.5;
+				this.x -= this.speed * deltaTime * 0.5;
+				this.y += this.speed * deltaTime * 0.5;
 				this.opacity -= 0.0005 * deltaTime;
 				this.scale -= 0.0002 * deltaTime;
 			} else {
@@ -51,33 +51,32 @@
 				this.isShooting = true;
 			}
 
-			return this.opacity > 0 && this.left >= -20 && this.top <= 120;
+			return this.opacity > 0 && this.x >= -20 && this.y <= 120;
 		}
 	}
 
 	class Cloud {
 		id: string;
-		left: number;
-		top: number;
+		x: number;
+		y: number;
 		speed: number;
 		scale: number;
 		opacity: number;
 
 		constructor() {
 			this.id = Math.random().toString(36).substring(2);
-			this.left = Math.random() * -100 - 50;
-			this.top = Math.random() * 90;
+			this.x = Math.random() * -100 - 50;
+			this.y = Math.random() * 90;
 			this.speed = Math.random() * 0.015 + 0.009;
 			this.scale = Math.random() * 0.5 + 0.5;
 			this.opacity = Math.random() * 0.5 + 0.5;
 		}
 
 		animate(deltaTime: number): boolean {
-			this.left += this.speed * deltaTime * 0.35;
+			this.x += this.speed * deltaTime * 0.35;
 			this.opacity = Math.min(this.opacity + 0.005 * deltaTime, 1);
-			// Round off the left position to four decimal places
-			this.left = Math.round(this.left * 10000) / 10000;
-			return this.left <= 120;
+			this.x = Math.round(this.x * 10000) / 10000;
+			return this.x <= 120;
 		}
 	}
 
@@ -112,13 +111,16 @@
 		if (deltaTime >= FRAME_INTERVAL) {
 			lastFrameTime = currentTime - (deltaTime % FRAME_INTERVAL);
 
-			clouds = clouds.filter(cloud => cloud.animate(deltaTime));
-			stars = stars.filter(star => star.animate(deltaTime));
-
 			if ($darkMode) {
-				while (stars.length < MAX_STARS) spawnStar();
+				stars = stars.filter(star => star.animate(deltaTime));
+				while (stars.length < MAX_STARS) {
+					spawnStar();
+				}
 			} else {
-				while (clouds.length < MAX_CLOUDS) spawnCloud();
+				clouds = clouds.filter(cloud => cloud.animate(deltaTime));
+				while (clouds.length < MAX_CLOUDS) {
+					spawnCloud();
+				}
 			}
 		}
 	}
@@ -162,9 +164,7 @@
 			<div
 				class="star"
 				style="
-					left: {star.left}%;
-					top: {star.top}%;
-					transform: scale({star.scale});
+					transform: translate3d({star.x}vw, {star.y}vh, 0) scale({star.scale});
 					opacity: {star.opacity};
 					filter: blur({star.isShooting ? '1px' : '0px'});
 				"
@@ -177,9 +177,7 @@
 			<div
 				class="cloud"
 				style="
-					left: {cloud.left}%;
-					top: {cloud.top}%;
-					transform: scale({cloud.scale});
+					transform: translate3d({cloud.x}vw, {cloud.y}vh, 0) scale({cloud.scale});
 					opacity: {cloud.opacity};
 				"
 			></div>
@@ -199,8 +197,15 @@
 		overflow: hidden;
 	}
 
-	.star {
+	.star,
+	.cloud {
 		position: absolute;
+		top: 0;
+		left: 0;
+		will-change: transform, opacity;
+	}
+
+	.star {
 		width: 2px;
 		height: 2px;
 		background: white;
@@ -211,7 +216,6 @@
 	}
 
 	.cloud {
-		position: absolute;
 		width: 200px;
 		height: 80px;
 		background: #fff;

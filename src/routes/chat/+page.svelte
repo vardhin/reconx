@@ -1,12 +1,15 @@
 <script lang="ts">
-    import { onMount, tick } from 'svelte';
+    import { onMount, afterUpdate, tick } from 'svelte';
     import ChatManager from '../../lib/ChatManager';
     import type { ChatMessage } from '../../lib/ChatManager'; // Use type-only import
     import { page } from '$app/stores';
     import Navbar from '../NavBar.svelte';
     import { v4 as uuidv4 } from 'uuid';
-
-
+    import { darkMode } from '../../lib/stores';
+    import { fade, fly, scale, slide } from 'svelte/transition';
+    import { spring } from 'svelte/motion';
+    import { flip } from 'svelte/animate';
+    import { quintOut } from 'svelte/easing';
   
     let roomID = 'Unknown Room';
     let publicKeyA = '';
@@ -18,17 +21,40 @@
     let editMessageText = '';
     let loading = false;
     let errorMessage = '';
+    let isDarkMode;
+    let isLoaded = false;
+    let pageLoaded = spring(0);
+    let lastMessageTimestamp = 0;
   
+    // Chunk Loading States
+    let messageLimit = 20; // Number of messages per chunk
+    let isLoadingOlderMessages = false;
+    let hasMoreMessages = true;
+  
+    let messageContainer: HTMLDivElement;
+    let scrollToBottom: () => void;
+  
+    darkMode.subscribe((value) => {
+		isDarkMode = value;
+	});
     // Extract myName and friendName from the URL query params
     $: publicKeyA = $page.url.searchParams.get('myName') || '';
     $: publicKeyB = $page.url.searchParams.get('friendName') || '';
   
-    onMount(() => {
-      if (publicKeyA && publicKeyB) {
-        initializeChat();
-      } else {
-        errorMessage = 'Both public keys are required to start the chat.';
-      }
+    onMount(async () => {
+        if (publicKeyA && publicKeyB) {
+            await initializeChat();
+            isLoaded = true;
+            scrollToBottom = () => {
+                if (messageContainer) {
+                    messageContainer.scrollTop = messageContainer.scrollHeight;
+                }
+            };
+            scrollToBottom();
+        } else {
+            errorMessage = 'Both public keys are required to start the chat.';
+            isLoaded = true;
+        }
     });
 
     function generateUniqueId(): string {
@@ -42,51 +68,96 @@
   
         await fetchMessages();
   
-        chatManager.onMessagesUpdated = async () => {
-          await fetchMessages();
-        };
+        chatManager.onMessageSaved(async (newMessage) => {
+            if (newMessage.timestamp > lastMessageTimestamp) {
+                messages = [...messages, newMessage];
+                lastMessageTimestamp = newMessage.timestamp;
+                await tick();
+                scrollToBottom();
+            }
+        });
       } catch (error) {
         console.error('Error initializing chat:', error);
         errorMessage = 'Failed to initialize chat.';
       }
     }
   
-    async function fetchMessages() {
+    async function fetchMessages(limit: number = messageLimit, beforeTimestamp: number = Date.now()) {
       if (chatManager) {
         loading = true;
         try {
           const history = await chatManager.readChatHistory();
-          messages = [...history.sort((a, b) => a.timestamp - b.timestamp)];
+          if (history.length < limit) {
+            hasMoreMessages = false;
+          }
+          if (beforeTimestamp === Date.now()) {
+            // Initial load
+            messages = [...history.sort((a, b) => a.timestamp - b.timestamp)];
+          } else {
+            // Load older messages
+            messages = [...history.sort((a, b) => a.timestamp - b.timestamp), ...messages];
+          }
+          if (messages.length > 0) {
+            lastMessageTimestamp = messages[messages.length - 1].timestamp;
+          }
           console.log('Fetched messages:', messages);
-          await tick(); // Ensure DOM updates after fetching messages
         } catch (error) {
           console.error('Error fetching messages:', error);
           errorMessage = 'Failed to fetch messages.';
         } finally {
           loading = false;
+          isLoadingOlderMessages = false;
         }
       }
     }
   
-    async function sendMessage() {
-      if (chatManager && newMessage.trim()) {
-        const message: ChatMessage = {
-          text: newMessage,
-          objectID: generateUniqueId(),
-          type: 'message',
-          senderID: publicKeyA,
-          timestamp: Date.now(),
-          acknowledgement: false,
-        };
-        console.log('Attempting to send message:', message);
-        try {
-          await chatManager.gun.get(chatManager.roomId).get(message.objectID).put(message);
-          console.log('Message sent successfully');
-          newMessage = '';
-        } catch (error) {
-          console.error('Error sending message:', error);
-        }
+    async function loadOlderMessages() {
+      if (isLoadingOlderMessages || !hasMoreMessages) return;
+      isLoadingOlderMessages = true;
+      const oldestMessage = messages[0];
+      const beforeTimestamp = oldestMessage ? oldestMessage.timestamp : Date.now();
+      await fetchMessages(messageLimit, beforeTimestamp);
+    }
+  
+    function handleScroll() {
+      if (messageContainer.scrollTop === 0 && hasMoreMessages && !isLoadingOlderMessages) {
+        const previousHeight = messageContainer.scrollHeight;
+        loadOlderMessages().then(() => {
+          // Maintain scroll position after loading older messages
+          afterUpdate(() => {
+            const newHeight = messageContainer.scrollHeight;
+            messageContainer.scrollTop = newHeight - previousHeight;
+          });
+        });
       }
+    }
+  
+    async function sendMessage(event: Event) {
+        event.preventDefault(); // Prevent form submission
+        if (chatManager && newMessage.trim()) {
+            const message: ChatMessage = {
+                text: newMessage,
+                objectID: generateUniqueId(),
+                type: 'message',
+                senderID: publicKeyA,
+                timestamp: Date.now(),
+                acknowledgement: false,
+            };
+            console.log('Attempting to send message:', message);
+            try {
+                await chatManager.gun.get(chatManager.roomId).get(message.objectID).put(message);
+                console.log('Message sent successfully');
+                newMessage = '';
+                // Optionally scroll to bottom after sending a message
+                afterUpdate(() => {
+                    if (messageContainer) {
+                        messageContainer.scrollTop = messageContainer.scrollHeight;
+                    }
+                });
+            } catch (error) {
+                console.error('Error sending message:', error);
+            }
+        }
     }
   
     async function editMessage() {
@@ -170,127 +241,179 @@
     }
 </script>
 
-<main>
+<main class="contact-screen" class:dark-mode={isDarkMode}>
   <Navbar title={publicKeyB}/>
 
-  {#if errorMessage}
-    <div class="error glass">
-      {errorMessage}
-    </div>
-  {/if}
-
-  <div class="chat-container glass">
-    <div class="message-history">
-      {#if loading}
-        <div class="loading">Loading messages...</div>
+  {#if isLoaded}
+    <div
+      class="message-container"
+      bind:this={messageContainer}
+      on:scroll={handleScroll}
+      in:fade={{ duration: 400, delay: 200 }}
+    >
+      {#if loading && messages.length === 0}
+        <div class="loading" in:scale={{ duration: 300, delay: 100 }}>Loading messages...</div>
+      {:else if errorMessage}
+        <div class="error" in:fly={{ y: 20, duration: 300, delay: 100 }}>
+          {errorMessage}
+        </div>
       {:else}
         <ul>
-          {#each messages as message}
-            {#if message.type === 'message'}
-              <li class={message.senderID === publicKeyA ? 'sent' : 'received'}>
-                <div class="message-content glass">
-                  <p>{message.text}</p>
-                  <small>{new Date(message.timestamp).toLocaleString()}</small>
-                </div>
-                <div class="message-actions">
-                  {#if message.acknowledgement}
-                    <span class="ack">✓</span>
-                  {/if}
-                  <button on:click={() => acknowledgeMessage(message.objectID)} title="Acknowledge">✓</button>
-                  <button on:click={() => deleteMessage(message.objectID)} title="Delete">🗑️</button>
-                  <button on:click={() => { editMessageId = message.objectID; editMessageText = message.text; }} title="Edit">✏️</button>
-                </div>
-              </li>
-            {/if}
+          {#each messages as message (message.objectID)}
+            <li class={message.senderID === publicKeyA ? 'sent' : 'received'}
+                in:slide={{ axis: 'y', duration: 300 }}
+                out:fade={{ duration: 200 }}
+                animate:flip={{ duration: 300, easing: quintOut }}
+            >
+              <div class="message-content glass" in:scale={{ duration: 200, delay: 100 }}>
+                <p>{message.text}</p>
+                <small>{new Date(message.timestamp).toLocaleString()}</small>
+              </div>
+              <div class="message-actions" in:fade={{ duration: 200, delay: 200 }}>
+                {#if message.acknowledgement}
+                  <span class="ack" in:scale={{ duration: 200 }}>✓</span>
+                {/if}
+                <button on:click={() => acknowledgeMessage(message.objectID)} title="Acknowledge">✓</button>
+                <button on:click={() => deleteMessage(message.objectID)} title="Delete">🗑️</button>
+                <button on:click={() => { editMessageId = message.objectID; editMessageText = message.text; }} title="Edit">✏️</button>
+              </div>
+            </li>
           {/each}
         </ul>
+        {#if isLoadingOlderMessages}
+          <div class="loading" in:scale={{ duration: 200 }}>Loading older messages...</div>
+        {/if}
+        {#if !hasMoreMessages && messages.length > 0}
+          <div class="no-more" in:fade={{ duration: 200 }}>No more messages</div>
+        {/if}
       {/if}
     </div>
-  </div>
 
-</main>
-<div class="input-area glass">
-  {#if editMessageId}
-    
-      <input bind:value={editMessageText} placeholder="Edit message" />
-      <button on:click={editMessage} title="Submit Edit">Submit Edit</button>
-      <button on:click={cancelEdit} title="Cancel Edit" class="cancel-button">Cancel</button>
-    
+    <footer class="input-area glass" in:fly={{ y: 50, duration: 300, delay: 300 }}>
+      {#if editMessageId}
+        <form on:submit|preventDefault={editMessage}>
+          <input bind:value={editMessageText} placeholder="Edit message" in:scale={{ duration: 200 }}/>
+          <button type="submit" title="Submit Edit" in:scale={{ duration: 200, delay: 50 }}>Submit Edit</button>
+          <button type="button" on:click={cancelEdit} title="Cancel Edit" class="cancel-button" in:scale={{ duration: 200, delay: 100 }}>Cancel</button>
+        </form>
+      {:else}
+        <form on:submit|preventDefault={sendMessage}>
+          <input bind:value={newMessage} placeholder="Type your message" in:scale={{ duration: 200 }}/>
+          <button type="submit" title="Send Message" in:scale={{ duration: 200, delay: 50 }}>Send</button>
+        </form>
+      {/if}
+    </footer>
   {:else}
-    
-      <input bind:value={newMessage} placeholder="Type your message" />
-      <button on:click={sendMessage} title="Send Message">Send</button>
-    
+    <div class="loading" in:scale={{ duration: 300 }}>Initializing chat...</div>
   {/if}
-</div>
+</main>
 
 <style>
   /* General Styles */
   main {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     max-width: 800px;
     margin: 0 auto;
-    padding: 20px;
+    padding: 0;
     display: flex;
     flex-direction: column;
     height: 100vh;
-    background: url('/path-to-background-image.jpg') no-repeat center center fixed;
+    background-color: var(--bg);
     background-size: cover;
     overflow: hidden;
-    margin-top: 17%;
+    position: relative;
   }
 
-  /* Glassmorphism Utility */
-  .glass {
-    background: rgba(255, 255, 255, 0.15);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border-radius: 15px;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-  }
-
-  /* Chat Container */
-  .chat-container {
+  /* Message Container */
+  .message-container {
     flex-grow: 1;
     overflow-y: auto;
-    margin-bottom: 20px;
-    padding: 20px;
-    border-radius: 15px;
-    box-sizing: border-box;
+    padding: 60px 10px 70px; /* Adjust top and bottom padding */
+    display: flex;
+    flex-direction: column;
+    transition: all 0.3s ease;
+    scrollbar-width: thin; /* For Firefox */
   }
 
-  /* Message History */
-  .message-history ul {
+  /* Custom Scrollbar for Webkit */
+  .message-container::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .message-container::-webkit-scrollbar-thumb {
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+  }
+
+  .message-container ul {
     list-style: none;
     padding: 0;
     margin: 0;
-  }
-
-  .message-history li {
-    margin-bottom: 15px;
     display: flex;
     flex-direction: column;
-    position: relative;
+    gap: 10px;
+  }
+
+  .message-container li {
+    display: flex;
+    flex-direction: column;
+    max-width: 80%;
+  }
+
+  .message-container li.sent {
+    align-self: flex-end;
+  }
+
+  .message-container li.received {
+    align-self: flex-start;
+  }
+
+  /* Navbar styles */
+  :global(.navbar) {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+  }
+
+  /* Input Area */
+  footer.input-area {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 15px;
+    border-radius: 15px 15px 0 0;
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    max-width: 800px;
+    margin: 0 auto;
+    z-index: 10;
+    background: rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(10px);
   }
 
   /* Message Content */
   .message-content {
-    max-width: 70%;
-    padding: 10px 15px;
+    max-width: 80%; 
+    padding: 12px 15px;
     border-radius: 18px;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     word-wrap: break-word;
+    background: rgba(255, 255, 255, 0.3);
+    transition: background 0.3s;
+    position: relative;
   }
 
   .sent .message-content {
-    align-self: flex-end;
     background: rgba(220, 248, 198, 0.3);
     border: 1px solid rgba(220, 248, 198, 0.5);
   }
 
   .received .message-content {
-    align-self: flex-start;
     background: rgba(255, 255, 255, 0.3);
     border: 1px solid rgba(255, 255, 255, 0.5);
   }
@@ -305,6 +428,16 @@
     font-size: 0.75em;
     color: #e0e0e0;
     text-shadow: 0px 0px 3px rgba(0,0,0,0.3);
+  }
+
+  /* Glassmorphism Utility */
+  .glass {
+    background: rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 15px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
   }
 
   /* Message Actions */
@@ -340,39 +473,18 @@
 
   /* Input Area */
   .input-area {
-    padding-left: 10%;
-    padding-right: 10%;
-    padding-top: 5%;
-    padding-bottom: 5%;
+    padding: 15px;
+    border-radius: 15px;
+    margin-bottom: 10px;
     width: 100%;
     display: flex;
-    border-radius: 0px;
     flex-direction: row;
     gap: 10px;
   }
 
-  .edit-message, .new-message {
-    display: flex;
-    align-items: center;
-  }
-
-  .edit-message {
-    background: rgba(255, 255, 255, 0.1);
-    padding: 10px;
-    border-radius: 12px;
-    animation: fadeIn 0.3s ease-in-out;
-  }
-
-  .new-message {
-    background: rgba(255, 255, 255, 0.1);
-    padding: 10px;
-    border-radius: 12px;
-    animation: fadeIn 0.3s ease-in-out;
-  }
-
   input {
     flex-grow: 1;
-    padding: 10px 15px;
+    padding: 12px 15px;
     border: none;
     border-radius: 20px;
     margin-right: 10px;
@@ -381,7 +493,7 @@
     backdrop-filter: blur(5px);
     box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
     outline: none;
-    transition: background 0.3s;
+    transition: background 0.3s, transform 0.3s;
   }
 
   input::placeholder {
@@ -390,10 +502,11 @@
 
   input:focus {
     background: rgba(255, 255, 255, 0.35);
+    transform: scale(1.02);
   }
 
   button {
-    padding: 10px 20px;
+    padding: 12px 20px;
     background: rgba(18, 140, 126, 0.6);
     color: white;
     border: none;
@@ -406,7 +519,7 @@
 
   button:hover {
     background: rgba(7, 94, 84, 0.8);
-    transform: translateY(-2px);
+    transform: translateY(-2px) scale(1.05);
   }
 
   .cancel-button {
@@ -440,19 +553,31 @@
   /* Responsive Design */
   @media (max-width: 600px) {
     main {
-      padding: 10px;
-    }
-
-    .chat-container {
-      padding: 15px;
+      padding: 0;
     }
 
     .message-content {
-      max-width: 85%;
+      max-width: 90%;
     }
 
-    button {
-      padding: 8px 16px;
+    .input-area {
+      padding: 10px;
+    }
+
+    input, button {
+      padding: 10px 15px;
+    }
+
+    .message-container {
+      padding: 60px 5px 70px; /* Adjust padding for mobile */
+    }
+
+    .message-container ul {
+      gap: 8px;
+    }
+
+    footer.input-area {
+      padding: 10px;
     }
   }
 
@@ -461,6 +586,44 @@
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
   }
+
+  /* Update these styles for smoother animations */
+  .message-container {
+    transition: all 0.3s ease;
+  }
+
+  .message-content, .message-actions button, input, button {
+    transition: all 0.2s ease;
+  }
+
+  .message-actions button:hover {
+    transform: scale(1.1);
+  }
+
+  input:focus {
+    transform: scale(1.02);
+  }
+
+  button:hover {
+    transform: translateY(-2px) scale(1.05);
+  }
+
+  /* Add this new style for smoother list updates */
+  .message-container ul {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: all 0.3s ease;
+  }
+
+  /* Additional Styles for Loading Older Messages and No More Messages */
+  .no-more {
+    text-align: center;
+    color: #a0a0a0;
+    padding: 10px;
+    font-style: italic;
+  }
 </style>
+
 
 

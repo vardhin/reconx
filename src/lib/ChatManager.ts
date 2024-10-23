@@ -12,12 +12,36 @@ export interface ChatMessage {
   targetID?: string; // New field for action messages
 }
 
+class SimpleEventEmitter {
+  private listeners: { [event: string]: Function[] } = {};
+
+  on(event: string, callback: Function) {
+    if (!this.listeners[event]) {
+      this.listeners[event] = [];
+    }
+    this.listeners[event].push(callback);
+  }
+
+  off(event: string, callback: Function) {
+    if (this.listeners[event]) {
+      this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
+    }
+  }
+
+  emit(event: string, ...args: any[]) {
+    if (this.listeners[event]) {
+      this.listeners[event].forEach(callback => callback(...args));
+    }
+  }
+}
+
 class ChatManager {
     public gun: any; // Change to public
     public roomId: string; // Change to public
     private localUserId: string;
     private chatHistoryFile: string;
     private fileContentHash: string | null = null; // To store previous file hash
+    private eventEmitter: SimpleEventEmitter;
   
     public onMessagesUpdated: (() => Promise<void>) | null = null; // Callback function to signal updates
   
@@ -37,6 +61,7 @@ class ChatManager {
         }); 
         this.listenToGun();
         this.pollChatHistoryChanges(); // Start monitoring file changes
+        this.eventEmitter = new SimpleEventEmitter();
       }
 
   // Sort public keys to form room ID
@@ -142,6 +167,9 @@ class ChatManager {
     history.push(message);
     history.sort((a, b) => a.timestamp - b.timestamp); // Sort by timestamp
     await this.writeChatHistory(history);
+    
+    // Emit an event after saving the message
+    this.eventEmitter.emit('messageSaved', message);
   }
 
   // Read chat history from the JSON file
@@ -254,6 +282,16 @@ class ChatManager {
     if (this.onMessagesUpdated) {
       this.onMessagesUpdated();
     }
+  }
+
+  // Add a method to subscribe to the messageSaved event
+  public onMessageSaved(callback: (message: ChatMessage) => void) {
+    this.eventEmitter.on('messageSaved', callback);
+  }
+
+  // Add a method to unsubscribe from the messageSaved event
+  public offMessageSaved(callback: (message: ChatMessage) => void) {
+    this.eventEmitter.off('messageSaved', callback);
   }
 }
 
