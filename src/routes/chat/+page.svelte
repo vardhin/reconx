@@ -1,7 +1,7 @@
 <script lang="ts">
-    import { onMount, afterUpdate, tick } from 'svelte';
+    import { onMount, afterUpdate, tick, onDestroy } from 'svelte';
     import ChatManager from '../../lib/ChatManager';
-    import type { ChatMessage } from '../../lib/ChatManager'; // Use type-only import
+    import type { ChatMessage } from '../../lib/ChatManager';
     import { page } from '$app/stores';
     import Navbar from '../NavBar.svelte';
     import { v4 as uuidv4 } from 'uuid';
@@ -40,17 +40,31 @@
     // Extract myName and friendName from the URL query params
     $: publicKeyA = $page.url.searchParams.get('myName') || '';
     $: publicKeyB = $page.url.searchParams.get('friendName') || '';
-  
+    
+    $: sortedMessages = messages.sort((a, b) => a.timestamp - b.timestamp);
+    
+    async function fetchAndUpdateMessages() {
+        await fetchMessages();
+        await tick();
+        scrollToBottom();
+    }
     onMount(async () => {
         if (publicKeyA && publicKeyB) {
             await initializeChat();
             isLoaded = true;
+
+            // Define scrollToBottom after chat is initialized
             scrollToBottom = () => {
                 if (messageContainer) {
                     messageContainer.scrollTop = messageContainer.scrollHeight;
                 }
             };
+
             scrollToBottom();
+
+            // Subscribe to both messageSaved and messagesUpdated events
+            chatManager.onMessageSaved(handleNewMessage);
+            chatManager.onMessagesUpdated(fetchAndUpdateMessages);
         } else {
             errorMessage = 'Both public keys are required to start the chat.';
             isLoaded = true;
@@ -83,32 +97,26 @@
     }
   
     async function fetchMessages(limit: number = messageLimit, beforeTimestamp: number = Date.now()) {
-      if (chatManager) {
-        loading = true;
-        try {
-          const history = await chatManager.readChatHistory();
-          if (history.length < limit) {
-            hasMoreMessages = false;
-          }
-          if (beforeTimestamp === Date.now()) {
-            // Initial load
-            messages = [...history.sort((a, b) => a.timestamp - b.timestamp)];
-          } else {
-            // Load older messages
-            messages = [...history.sort((a, b) => a.timestamp - b.timestamp), ...messages];
-          }
-          if (messages.length > 0) {
-            lastMessageTimestamp = messages[messages.length - 1].timestamp;
-          }
-          console.log('Fetched messages:', messages);
-        } catch (error) {
-          console.error('Error fetching messages:', error);
-          errorMessage = 'Failed to fetch messages.';
-        } finally {
-          loading = false;
-          isLoadingOlderMessages = false;
+        if (chatManager) {
+            loading = true;
+            try {
+                const history = await chatManager.readChatHistory();
+                if (history.length < limit) {
+                    hasMoreMessages = false;
+                }
+                messages = history; // This will trigger reactivity
+                if (messages.length > 0) {
+                    lastMessageTimestamp = messages[messages.length - 1].timestamp;
+                }
+                console.log('Fetched messages:', messages);
+            } catch (error) {
+                console.error('Error fetching messages:', error);
+                errorMessage = 'Failed to fetch messages.';
+            } finally {
+                loading = false;
+                isLoadingOlderMessages = false;
+            }
         }
-      }
     }
   
     async function loadOlderMessages() {
@@ -133,7 +141,7 @@
     }
   
     async function sendMessage(event: Event) {
-        event.preventDefault(); // Prevent form submission
+        event.preventDefault();
         if (chatManager && newMessage.trim()) {
             const message: ChatMessage = {
                 text: newMessage,
@@ -145,99 +153,89 @@
             };
             console.log('Attempting to send message:', message);
             try {
-                await chatManager.gun.get(chatManager.roomId).get(message.objectID).put(message);
+                await chatManager.sendMessage(message);
                 console.log('Message sent successfully');
                 newMessage = '';
-                // Optionally scroll to bottom after sending a message
-                afterUpdate(() => {
-                    if (messageContainer) {
-                        messageContainer.scrollTop = messageContainer.scrollHeight;
-                    }
-                });
+                messages = [...messages, message]; // This will trigger reactivity
+                await tick();
+                scrollToBottom();
             } catch (error) {
                 console.error('Error sending message:', error);
+                errorMessage = 'Failed to send message.';
             }
         }
     }
   
     async function editMessage() {
         if (chatManager && editMessageText.trim() && editMessageId) {
-            const message: ChatMessage = {
-                text: editMessageText,
-                objectID: generateUniqueId(), // Unique ID for the edit action
-                type: 'edit',
-                senderID: publicKeyA,
-                timestamp: Date.now(),
-                acknowledgement: false,
-                targetID: editMessageId, // Reference to the message being edited
-            };
-            console.log('Editing message:', message);
             try {
-                await chatManager.gun.get(chatManager.roomId).set(message);
+                await chatManager.editMessage(editMessageText, editMessageId);
                 console.log('Edit action sent successfully');
+                messages = messages.map(msg => 
+                    msg.objectID === editMessageId 
+                        ? {...msg, text: editMessageText} 
+                        : msg
+                ); // This will trigger reactivity
                 editMessageText = '';
                 editMessageId = '';
             } catch (error) {
-                console.error('Error sending edit action:', error);
-                errorMessage = 'Failed to send edit action.';
+                console.error('Error editing message:', error);
+                errorMessage = 'Failed to edit message.';
             }
         }
     }
   
     async function deleteMessage(targetObjectID: string) {
-      if (chatManager && targetObjectID.trim()) {
-        const message: ChatMessage = {
-          text: '', // Optional: You can include a reason or context if needed
-          objectID: generateUniqueId(), // Ensure a unique ID for this action
-          type: 'delete',
-          senderID: publicKeyA,
-          timestamp: Date.now(),
-          acknowledgement: false,
-          targetID: targetObjectID, // Specify which message to delete
-        };
-        console.log('Deleting message:', message);
-        try {
-          await chatManager.gun.get(chatManager.roomId).set(message);
-          console.log('Delete action sent successfully');
-        } catch (error) {
-          console.error('Error sending delete action:', error);
+        if (chatManager && targetObjectID.trim()) {
+            try {
+                await chatManager.deleteMessage(targetObjectID);
+                console.log('Delete action sent successfully');
+                messages = messages.filter(msg => msg.objectID !== targetObjectID); // This will trigger reactivity
+            } catch (error) {
+                console.error('Error deleting message:', error);
+                errorMessage = 'Failed to delete message.';
+            }
         }
-      }
     }
   
     async function acknowledgeMessage(targetObjectID: string) {
-      if (chatManager && targetObjectID.trim()) {
-        const message: ChatMessage = {
-          text: '', // Optional: Additional info if needed
-          objectID: generateUniqueId(), // Ensure a unique ID for this action
-          type: 'acknowledgment',
-          senderID: publicKeyA,
-          timestamp: Date.now(),
-          acknowledgement: false,
-          targetID: targetObjectID, // Specify which message to acknowledge
-        };
-        console.log('Acknowledging message:', message);
-        try {
-          await chatManager.gun.get(chatManager.roomId).set(message);
-          console.log('Acknowledge action sent successfully');
-        } catch (error) {
-          console.error('Error sending acknowledge action:', error);
+        if (chatManager && targetObjectID.trim()) {
+            try {
+                await chatManager.acknowledgeMessage(targetObjectID);
+                console.log('Acknowledge action sent successfully');
+                messages = messages.map(msg => 
+                    msg.objectID === targetObjectID 
+                        ? {...msg, acknowledgement: true} 
+                        : msg
+                ); // This will trigger reactivity
+            } catch (error) {
+                console.error('Error acknowledging message:', error);
+                errorMessage = 'Failed to acknowledge message.';
+            }
         }
-      }
     }
 
     function cancelEdit() {
       editMessageId = '';
       editMessageText = '';
     }
-
     function startEditing(messageId: string, currentText: string) {
         editMessageId = messageId;
         editMessageText = currentText;
     }
+    onDestroy(() => {
+        if (chatManager) {
+            chatManager.offMessageSaved(handleNewMessage);
+            chatManager.offMessagesUpdated(fetchAndUpdateMessages);
+        }
+    });
 
-    async function updateChatUI() {
-        // Implement your UI update logic here
+    function handleNewMessage(newMessage: ChatMessage) {
+        if (newMessage.timestamp > lastMessageTimestamp) {
+            messages = [...messages, newMessage]; // This will trigger reactivity
+            lastMessageTimestamp = newMessage.timestamp;
+            tick().then(scrollToBottom);
+        }
     }
 </script>
 
@@ -259,7 +257,7 @@
         </div>
       {:else}
         <ul>
-          {#each messages as message (message.objectID)}
+          {#each sortedMessages as message (message.objectID)}
             <li class={message.senderID === publicKeyA ? 'sent' : 'received'}
                 in:slide={{ axis: 'y', duration: 300 }}
                 out:fade={{ duration: 200 }}
@@ -275,7 +273,7 @@
                 {/if}
                 <button on:click={() => acknowledgeMessage(message.objectID)} title="Acknowledge">✓</button>
                 <button on:click={() => deleteMessage(message.objectID)} title="Delete">🗑️</button>
-                <button on:click={() => { editMessageId = message.objectID; editMessageText = message.text; }} title="Edit">✏️</button>
+                <button on:click={() => startEditing(message.objectID, message.text)} title="Edit">✏️</button>
               </div>
             </li>
           {/each}
