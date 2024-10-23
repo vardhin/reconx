@@ -114,9 +114,9 @@ class ChatManager {
         }
         break;
       case 'edit':
-        if (message.text && message.objectID) {
-          // Assuming edit messages contain the new text and the objectID of the message to edit
-          await this.editMessageById(message.text, message.objectID);
+        if (message.text && message.targetID) {
+          // Use targetID instead of objectID
+          await this.editMessageById(message.text, message.targetID);
         } else {
           console.warn('Edit action received with incomplete data');
         }
@@ -220,16 +220,19 @@ class ChatManager {
     this.gun.get(this.roomId).get(objectID).put(null);
   }
 
-  // Edit message by object ID
-  public async editMessageById(newText: string, objectID: string) {
+  // Edit message by target ID
+  public async editMessageById(newText: string, targetID: string) {
     const history = await this.readChatHistory();
-    const message = history.find((msg) => msg.objectID === objectID);
+    const message = history.find((msg) => msg.objectID === targetID);
     if (message) {
       message.text = newText;
       await this.writeChatHistory(history);
 
       // Update in Gun.js
-      this.gun.get(this.roomId).get(objectID).put({ ...message });
+      this.gun.get(this.roomId).get(targetID).put({ ...message });
+      console.log(`Message with ID ${targetID} edited successfully.`);
+    } else {
+      console.warn(`Message with ID ${targetID} not found.`);
     }
   }
 
