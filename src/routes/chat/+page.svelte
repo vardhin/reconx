@@ -21,33 +21,37 @@
     let editMessageText = '';
     let loading = false;
     let errorMessage = '';
-    let isDarkMode;
+    let isDarkMode = false;
     let isLoaded = false;
     let pageLoaded = spring(0);
     let lastMessageTimestamp = 0;
   
     // Chunk Loading States
-    let messageLimit = 20; // Number of messages per chunk
+    const messageLimit = 20; // Number of messages per chunk
     let isLoadingOlderMessages = false;
     let hasMoreMessages = true;
   
     let messageContainer: HTMLDivElement;
     let scrollToBottom: () => void;
+    let isSending = false;
   
-    darkMode.subscribe((value) => {
-		isDarkMode = value;
-	});
+    const unsubscribeDarkMode = darkMode.subscribe((value) => {
+        isDarkMode = value;
+    });
+  
     // Extract myName and friendName from the URL query params
     $: publicKeyA = $page.url.searchParams.get('myName') || '';
     $: publicKeyB = $page.url.searchParams.get('friendName') || '';
     
-    $: sortedMessages = messages.sort((a, b) => a.timestamp - b.timestamp);
+    // Create a sorted copy of messages to avoid mutating the original array
+    $: sortedMessages = [...messages].sort((a, b) => a.timestamp - b.timestamp);
     
     async function fetchAndUpdateMessages() {
         await fetchMessages();
         await tick();
         scrollToBottom();
     }
+  
     onMount(async () => {
         if (publicKeyA && publicKeyB) {
             await initializeChat();
@@ -70,7 +74,7 @@
             isLoaded = true;
         }
     });
-
+  
     function generateUniqueId(): string {
         return uuidv4();
     }
@@ -82,14 +86,9 @@
   
         await fetchMessages();
   
-        chatManager.onMessageSaved(async (newMessage) => {
-            if (newMessage.timestamp > lastMessageTimestamp) {
-                messages = [...messages, newMessage];
-                lastMessageTimestamp = newMessage.timestamp;
-                await tick();
-                scrollToBottom();
-            }
-        });
+        // Ensure listeners are only attached once
+        chatManager.onMessageSaved(handleNewMessage);
+        chatManager.onMessagesUpdated(fetchAndUpdateMessages);
       } catch (error) {
         console.error('Error initializing chat:', error);
         errorMessage = 'Failed to initialize chat.';
@@ -133,36 +132,69 @@
         loadOlderMessages().then(() => {
           // Maintain scroll position after loading older messages
           afterUpdate(() => {
-            const newHeight = messageContainer.scrollHeight;
-            messageContainer.scrollTop = newHeight - previousHeight;
+            if (messageContainer) {
+              const newHeight = messageContainer.scrollHeight;
+              messageContainer.scrollTop = newHeight - previousHeight;
+            }
           });
+        }).catch(error => {
+          console.error('Error loading older messages:', error);
+          errorMessage = 'Failed to load older messages.';
+          isLoadingOlderMessages = false;
         });
       }
     }
   
     async function sendMessage(event: Event) {
         event.preventDefault();
-        if (chatManager && newMessage.trim()) {
+        
+        if (newMessage.trim() && !isSending) {
+            isSending = true;
             const message: ChatMessage = {
-                text: newMessage,
+                text: newMessage.trim(),
                 objectID: generateUniqueId(),
                 type: 'message',
                 senderID: publicKeyA,
                 timestamp: Date.now(),
                 acknowledgement: false,
             };
-            console.log('Attempting to send message:', message);
+            
             try {
-                await chatManager.sendMessage(message);
-                console.log('Message sent successfully');
+                messages = [...messages, message];
                 newMessage = '';
-                messages = [...messages, message]; // This will trigger reactivity
                 await tick();
                 scrollToBottom();
+                
+                // Send message in the background
+                sendMessageToChatManager(message);
             } catch (error) {
-                console.error('Error sending message:', error);
-                errorMessage = 'Failed to send message.';
+                console.error('Error:', error);
+                errorMessage = 'Failed to update UI: ' + error.message;
+            } finally {
+                isSending = false;
             }
+        }
+    }
+  
+    async function sendMessageToChatManager(message: ChatMessage) {
+        if (chatManager) {
+            try {
+                await Promise.race([
+                    chatManager.sendMessage(message),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Send timeout')), 5000))
+                ]);
+            } catch (error) {
+                console.error('Error sending to ChatManager:', error);
+                errorMessage = 'Failed to send message: ' + error.message;
+                messages = messages.map(msg => 
+                    msg.objectID === message.objectID 
+                        ? {...msg, sendStatus: 'failed'} 
+                        : msg
+                );
+            }
+        } else {
+            console.error('ChatManager not available');
+            errorMessage = 'ChatManager not available';
         }
     }
   
@@ -175,7 +207,7 @@
                     msg.objectID === editMessageId 
                         ? {...msg, text: editMessageText} 
                         : msg
-                ); // This will trigger reactivity
+                );
                 editMessageText = '';
                 editMessageId = '';
             } catch (error) {
@@ -190,7 +222,7 @@
             try {
                 await chatManager.deleteMessage(targetObjectID);
                 console.log('Delete action sent successfully');
-                messages = messages.filter(msg => msg.objectID !== targetObjectID); // This will trigger reactivity
+                messages = messages.filter(msg => msg.objectID !== targetObjectID);
             } catch (error) {
                 console.error('Error deleting message:', error);
                 errorMessage = 'Failed to delete message.';
@@ -207,7 +239,7 @@
                     msg.objectID === targetObjectID 
                         ? {...msg, acknowledgement: true} 
                         : msg
-                ); // This will trigger reactivity
+                );
             } catch (error) {
                 console.error('Error acknowledging message:', error);
                 errorMessage = 'Failed to acknowledge message.';
@@ -219,22 +251,29 @@
       editMessageId = '';
       editMessageText = '';
     }
+  
     function startEditing(messageId: string, currentText: string) {
         editMessageId = messageId;
         editMessageText = currentText;
     }
+  
     onDestroy(() => {
         if (chatManager) {
             chatManager.offMessageSaved(handleNewMessage);
             chatManager.offMessagesUpdated(fetchAndUpdateMessages);
         }
+        unsubscribeDarkMode();
     });
-
+  
     function handleNewMessage(newMessage: ChatMessage) {
         if (newMessage.timestamp > lastMessageTimestamp) {
-            messages = [...messages, newMessage]; // This will trigger reactivity
-            lastMessageTimestamp = newMessage.timestamp;
-            tick().then(scrollToBottom);
+            // Check if the message already exists in the array
+            const messageExists = messages.some(msg => msg.objectID === newMessage.objectID);
+            if (!messageExists) {
+                messages = [...messages, newMessage]; // This will trigger reactivity
+                lastMessageTimestamp = newMessage.timestamp;
+                tick().then(scrollToBottom);
+            }
         }
     }
 </script>
@@ -257,7 +296,7 @@
         </div>
       {:else}
         <ul>
-          {#each sortedMessages as message (message.objectID)}
+          {#each messages as message (message.objectID + '-' + message.timestamp)}
             <li class={message.senderID === publicKeyA ? 'sent' : 'received'}
                 in:slide={{ axis: 'y', duration: 300 }}
                 out:fade={{ duration: 200 }}
@@ -286,24 +325,30 @@
         {/if}
       {/if}
     </div>
-
-    <footer class="input-area glass" in:fly={{ y: 50, duration: 300, delay: 300 }}>
-      {#if editMessageId}
-        <form on:submit|preventDefault={editMessage}>
-          <input bind:value={editMessageText} placeholder="Edit message" in:scale={{ duration: 200 }}/>
-          <button type="submit" title="Submit Edit" in:scale={{ duration: 200, delay: 50 }}>Submit Edit</button>
-          <button type="button" on:click={cancelEdit} title="Cancel Edit" class="cancel-button" in:scale={{ duration: 200, delay: 100 }}>Cancel</button>
-        </form>
-      {:else}
-        <form on:submit|preventDefault={sendMessage}>
-          <input bind:value={newMessage} placeholder="Type your message" in:scale={{ duration: 200 }}/>
-          <button type="submit" title="Send Message" in:scale={{ duration: 200, delay: 50 }}>Send</button>
-        </form>
-      {/if}
-    </footer>
   {:else}
     <div class="loading" in:scale={{ duration: 300 }}>Initializing chat...</div>
   {/if}
+  
+  <footer class="input-area glass" in:fly={{ y: 50, duration: 300, delay: 300 }}>
+    {#if editMessageId}
+      <form on:submit|preventDefault={editMessage}>
+        <input bind:value={editMessageText} placeholder="Edit message" in:scale={{ duration: 200 }}/>
+        <button type="submit" title="Submit Edit" in:scale={{ duration: 200, delay: 50 }}>Submit Edit</button>
+        <button type="button" on:click={cancelEdit} title="Cancel Edit" class="cancel-button" in:scale={{ duration: 200, delay: 100 }}>Cancel</button>
+      </form>
+    {:else}
+      <form on:submit|preventDefault={sendMessage}>
+        <input 
+            bind:value={newMessage} 
+            placeholder="Type your message"
+            disabled={isSending}
+        />
+        <button type="submit" disabled={!newMessage.trim() || isSending}>
+            Send
+        </button>
+      </form>
+    {/if}
+  </footer>
 </main>
 
 <style>
@@ -319,6 +364,11 @@
     background-size: cover;
     overflow: hidden;
     position: relative;
+  }
+
+  /* Apply dark mode styles */
+  .dark-mode {
+    /* Add your dark mode specific styles here */
   }
 
   /* Message Container */
@@ -349,6 +399,7 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+    transition: all 0.3s ease;
   }
 
   .message-container li {
@@ -606,14 +657,6 @@
     transform: translateY(-2px) scale(1.05);
   }
 
-  /* Add this new style for smoother list updates */
-  .message-container ul {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    transition: all 0.3s ease;
-  }
-
   /* Additional Styles for Loading Older Messages and No More Messages */
   .no-more {
     text-align: center;
@@ -622,6 +665,3 @@
     font-style: italic;
   }
 </style>
-
-
-

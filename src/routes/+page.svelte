@@ -105,6 +105,4 @@
 .contact-list {
 	padding-bottom: 80px; /* Add padding to the bottom of the contact list */
 }
-
-/* ... other existing styles ... */
 </style>

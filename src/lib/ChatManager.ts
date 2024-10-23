@@ -173,7 +173,13 @@ class ChatManager {
     // Append a message to the local chat history JSON
     private async appendMessageToHistory(message: ChatMessage) {
         const history = await this.readChatHistory();
-        history.push(message);
+        const existingIndex = history.findIndex(msg => msg.objectID === message.objectID);
+        if (existingIndex !== -1) {
+            // Update existing message instead of adding a duplicate
+            history[existingIndex] = message;
+        } else {
+            history.push(message);
+        }
         history.sort((a, b) => a.timestamp - b.timestamp); // Sort by timestamp
         await this.writeChatHistory(history);
         
