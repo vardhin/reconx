@@ -10,6 +10,12 @@
     import { spring } from 'svelte/motion';
     import { flip } from 'svelte/animate';
     import { quintOut } from 'svelte/easing';
+    import FaPaperPlane from 'svelte-icons/fa/FaPaperPlane.svelte';
+    import FaChevronDown from 'svelte-icons/fa/FaChevronDown.svelte';
+    import FaCheck from 'svelte-icons/fa/FaCheck.svelte';
+    import FaTrash from 'svelte-icons/fa/FaTrash.svelte';
+    import FaPencilAlt from 'svelte-icons/fa/FaPencilAlt.svelte';
+	import { pushState } from '$app/navigation';
   
     let roomID = 'Unknown Room';
     let publicKeyA = '';
@@ -34,6 +40,10 @@
     let messageContainer: HTMLDivElement;
     let scrollToBottom: () => void;
     let isSending = false;
+    let isAtBottom = true;
+    let showScrollButton = false;
+  
+    let selectedMessageId: string | null = null;
   
     const unsubscribeDarkMode = darkMode.subscribe((value) => {
         isDarkMode = value;
@@ -142,6 +152,12 @@
           errorMessage = 'Failed to load older messages.';
           isLoadingOlderMessages = false;
         });
+      }
+
+      if (messageContainer) {
+        const { scrollTop, scrollHeight, clientHeight } = messageContainer;
+        isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
+        showScrollButton = !isAtBottom;
       }
     }
   
@@ -276,6 +292,28 @@
             }
         }
     }
+
+    function smoothScrollToBottom() {
+        if (messageContainer) {
+            const scrollHeight = messageContainer.scrollHeight;
+            const height = messageContainer.clientHeight;
+            const maxScrollTop = scrollHeight - height;
+            
+            messageContainer.scrollTo({
+                top: maxScrollTop,
+                behavior: 'smooth'
+            });
+        }
+    }
+
+    function toggleMessageActions(messageId: string) {
+        selectedMessageId = selectedMessageId === messageId ? null : messageId;
+    }
+
+    // Function to get sender name (you might want to replace this with actual logic)
+    function getSenderName(senderId: string) {
+        return senderId === publicKeyA ? publicKeyA : publicKeyB;
+    }
 </script>
 
 <main class="contact-screen" class:dark-mode={isDarkMode}>
@@ -301,19 +339,43 @@
                 in:slide={{ axis: 'y', duration: 300 }}
                 out:fade={{ duration: 200 }}
                 animate:flip={{ duration: 300, easing: quintOut }}
+                on:click={() => toggleMessageActions(message.objectID)}
             >
               <div class="message-content glass" in:scale={{ duration: 200, delay: 100 }}>
                 <p>{message.text}</p>
-                <small>{new Date(message.timestamp).toLocaleString()}</small>
-              </div>
-              <div class="message-actions" in:fade={{ duration: 200, delay: 200 }}>
-                {#if message.acknowledgement}
-                  <span class="ack" in:scale={{ duration: 200 }}>✓</span>
+                {#if selectedMessageId === message.objectID}
+                    <div class="message-details" in:fade={{ duration: 200 }}>
+                        <small>{getSenderName(message.senderID)}</small>
+                        <small>{new Date(message.timestamp).toLocaleString()}</small>
+                    </div>
                 {/if}
-                <button on:click={() => acknowledgeMessage(message.objectID)} title="Acknowledge">✓</button>
-                <button on:click={() => deleteMessage(message.objectID)} title="Delete">🗑️</button>
-                <button on:click={() => startEditing(message.objectID, message.text)} title="Edit">✏️</button>
               </div>
+              {#if selectedMessageId === message.objectID}
+                  <div class="message-actions" in:fade={{ duration: 200 }}>
+                      {#if message.acknowledgement}
+                          <span class="ack" in:scale={{ duration: 200 }}>
+                              <div class="icon">
+                                  <FaCheck />
+                              </div>
+                          </span>
+                      {/if}
+                      <button on:click|stopPropagation={() => acknowledgeMessage(message.objectID)} title="Acknowledge">
+                          <div class="icon">
+                              <FaCheck />
+                          </div>
+                      </button>
+                      <button on:click|stopPropagation={() => deleteMessage(message.objectID)} title="Delete">
+                          <div class="icon">
+                              <FaTrash />
+                          </div>
+                      </button>
+                      <button on:click|stopPropagation={() => startEditing(message.objectID, message.text)} title="Edit">
+                          <div class="icon">
+                              <FaPencilAlt />
+                          </div>
+                      </button>
+                  </div>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -325,16 +387,33 @@
         {/if}
       {/if}
     </div>
+
+    {#if showScrollButton}
+      <button 
+        class="scroll-to-bottom-btn"
+        on:click={smoothScrollToBottom}
+        in:fade={{ duration: 200 }}
+        out:fade={{ duration: 200 }}
+      >
+        <div class="icon">
+          <FaChevronDown />
+        </div>
+      </button>
+    {/if}
   {:else}
     <div class="loading" in:scale={{ duration: 300 }}>Initializing chat...</div>
   {/if}
   
-  <footer class="input-area glass" in:fly={{ y: 50, duration: 300, delay: 300 }}>
+  <footer class="input-area glass">
     {#if editMessageId}
       <form on:submit|preventDefault={editMessage}>
-        <input bind:value={editMessageText} placeholder="Edit message" in:scale={{ duration: 200 }}/>
-        <button type="submit" title="Submit Edit" in:scale={{ duration: 200, delay: 50 }}>Submit Edit</button>
-        <button type="button" on:click={cancelEdit} title="Cancel Edit" class="cancel-button" in:scale={{ duration: 200, delay: 100 }}>Cancel</button>
+        <input bind:value={editMessageText} placeholder="Edit message" />
+        <button type="submit" title="Submit Edit" class="action-button">
+          <i class="fas fa-check"></i>
+        </button>
+        <button type="button" on:click={cancelEdit} title="Cancel Edit" class="cancel-button">
+          <i class="fas fa-times"></i>
+        </button>
       </form>
     {:else}
       <form on:submit|preventDefault={sendMessage}>
@@ -343,8 +422,10 @@
             placeholder="Type your message"
             disabled={isSending}
         />
-        <button type="submit" disabled={!newMessage.trim() || isSending}>
-            Send
+        <button type="submit" disabled={!newMessage.trim() || isSending} class="send-button glassmorphic">
+            <div class="icon">
+                <FaPaperPlane />
+            </div>
         </button>
       </form>
     {/if}
@@ -400,6 +481,8 @@
     flex-direction: column;
     gap: 10px;
     transition: all 0.3s ease;
+    padding-top: 20px;  /* Add padding to the top */
+    padding-bottom: 20px;  /* Add padding to the bottom */
   }
 
   .message-container li {
@@ -416,6 +499,14 @@
     align-self: flex-start;
   }
 
+  .message-container li:first-child {
+    margin-top: 20px;  /* Add margin to the first message */
+  }
+
+  .message-container li:last-child {
+    margin-bottom: 20px;  /* Add margin to the last message */
+  }
+
   /* Navbar styles */
   :global(.navbar) {
     position: fixed;
@@ -427,22 +518,99 @@
     backdrop-filter: blur(10px);
   }
 
-  /* Input Area */
+  /* Updated Input Area Styles */
   footer.input-area {
     position: fixed;
     bottom: 0;
     left: 0;
     right: 0;
-    padding: 15px;
-    border-radius: 15px 15px 0 0;
+    padding: 12px 16px;
     display: flex;
     flex-direction: row;
-    gap: 10px;
+    gap: 12px;
+    width: 100%;
     max-width: 800px;
     margin: 0 auto;
     z-index: 10;
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.2);
     backdrop-filter: blur(10px);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+    border-top-left-radius: 20px;
+    border-top-right-radius: 20px;
+    box-sizing: border-box;
+  }
+
+  footer.input-area form {
+    display: flex;
+    width: 100%;
+    gap: 12px;
+    align-items: center;
+  }
+
+  footer.input-area input {
+    flex-grow: 1;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 25px;
+    background: rgba(255, 255, 255, 0.3);
+    color: #333;
+    font-size: 16px;
+    transition: all 0.3s ease;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.1);
+  }
+
+  footer.input-area input:focus {
+    background: rgba(255, 255, 255, 0.4);
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2);
+    outline: none;
+  }
+
+  footer.input-area button {
+    padding: 12px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(18, 140, 126, 0.8);
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+  }
+
+  footer.input-area button:hover {
+    background: rgba(7, 94, 84, 0.9);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  footer.input-area button:disabled {
+    background: rgba(150, 150, 150, 0.5);
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  footer.input-area .cancel-button {
+    background: rgba(231, 76, 60, 0.8);
+  }
+
+  footer.input-area .cancel-button:hover {
+    background: rgba(192, 57, 43, 0.9);
+  }
+
+  footer.input-area .send-button {
+    background: linear-gradient(135deg, #25D366, #128C7E);
+  }
+
+  footer.input-area .send-button:hover {
+    background: linear-gradient(135deg, #128C7E, #075E54);
   }
 
   /* Message Content */
@@ -494,24 +662,38 @@
     display: flex;
     justify-content: flex-end;
     margin-top: 5px;
+    position: absolute;
+    right: 0;
+    bottom: -30px;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 15px;
+    padding: 5px;
+    z-index: 10; /* Ensure it appears above other elements */
   }
 
   .message-actions button {
     background: rgba(255, 255, 255, 0.25);
     border: none;
     cursor: pointer;
-    font-size: 1em;
     margin-left: 5px;
-    padding: 5px;
-    border-radius: 8px;
-    transition: background 0.3s, transform 0.3s;
+    padding: 8px;
+    border-radius: 50%;
+    transition: all 0.3s ease;
     color: #ffffff;
     backdrop-filter: blur(5px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .message-actions button:hover {
     background: rgba(255, 255, 255, 0.35);
     transform: scale(1.1);
+  }
+
+  .message-actions .icon {
+    width: 16px;
+    height: 16px;
   }
 
   .ack {
@@ -523,7 +705,6 @@
   /* Input Area */
   .input-area {
     padding: 15px;
-    border-radius: 15px;
     margin-bottom: 10px;
     width: 100%;
     display: flex;
@@ -626,7 +807,23 @@
     }
 
     footer.input-area {
+      padding: 10px 12px;
+      border-radius: 0;
+      left: 0;
+      right: 0;
+      width: 100%;
+    }
+
+    footer.input-area input {
+      padding: 10px 16px;
+      font-size: 14px;
+    }
+
+    footer.input-area button {
       padding: 10px;
+      font-size: 16px;
+      width: 40px;
+      height: 40px;
     }
   }
 
@@ -664,4 +861,139 @@
     padding: 10px;
     font-style: italic;
   }
+
+  .icon {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Ensure the icon color matches the button text color */
+  :global(.icon svg) {
+    fill: currentColor;
+  }
+
+  .scroll-to-bottom-btn {
+    position: fixed;
+    bottom: 80px;
+    right: 20px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(18, 140, 126, 0.8);
+    color: white;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
+  }
+
+  .scroll-to-bottom-btn:hover {
+    background: rgba(7, 94, 84, 0.9);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  }
+
+  .scroll-to-bottom-btn .icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Add styles for message details */
+  .message-details {
+    display: flex;
+    flex-direction: column;
+    font-size: 0.75em;
+    color: #e0e0e0;
+    margin-top: 5px;
+  }
+
+  .message-details small {
+    margin-top: 2px;
+  }
+
+  /* Add this new style for positioning */
+  li {
+    position: relative;
+  }
+
+  /* Updated styles for the send button */
+  .send-button.glassmorphic {
+    background: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.08);
+    transition: all 0.3s ease;
+  }
+
+  .send-button.glassmorphic:hover {
+    background: rgba(255, 255, 255, 0.25);
+    box-shadow: 0 7px 14px rgba(0, 0, 0, 0.1), 0 3px 6px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+  }
+
+  .send-button.glassmorphic:active {
+    transform: translateY(1px);
+  }
+
+  .send-button.glassmorphic .icon {
+    width: 24px;
+    height: 24px;
+    transition: all 0.3s ease;
+  }
+
+  /* Glow effect for the send button */
+  .send-button.glassmorphic::after {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: linear-gradient(45deg, #ff00ea, #00fffb);
+    filter: blur(15px);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: -1;
+    border-radius: inherit;
+  }
+
+  .send-button.glassmorphic:hover::after {
+    opacity: 0.7;
+  }
+
+  /* Theme-based color for the send button icon */
+  :global(.send-button.glassmorphic .icon svg) {
+    fill: var(--text-color);
+    filter: drop-shadow(0 0 2px var(--text-color));
+  }
+
+  /* Dark mode specific styles */
+  .dark-mode .send-button.glassmorphic {
+    background: rgba(0, 0, 0, 0.2);
+    border-color: rgba(255, 255, 255, 0.05);
+  }
+
+  .dark-mode .send-button.glassmorphic:hover {
+    background: rgba(0, 0, 0, 0.25);
+  }
+
+  .dark-mode .send-button.glassmorphic::after {
+    background: linear-gradient(45deg, #7700ff, #00ffd5);
+  }
 </style>
+
+
+
+
+
+
+
+
+
+
