@@ -79,6 +79,10 @@
             // Subscribe to both messageSaved and messagesUpdated events
             chatManager.onMessageSaved(handleNewMessage);
             chatManager.onMessagesUpdated(fetchAndUpdateMessages);
+
+            // Subscribe to new events
+            chatManager.onMessageDeleted(handleMessageDeleted);
+            chatManager.onMessageUpdated(handleMessageUpdated);
         } else {
             errorMessage = 'Both public keys are required to start the chat.';
             isLoaded = true;
@@ -110,10 +114,12 @@
             loading = true;
             try {
                 const history = await chatManager.readChatHistory();
+                history.sort((a, b) => b.timestamp - a.timestamp); // Sort descending
+                const paginated = history.slice(0, limit);
+                messages = paginated.reverse(); // Reverse to ascending
                 if (history.length < limit) {
                     hasMoreMessages = false;
                 }
-                messages = history; // This will trigger reactivity
                 if (messages.length > 0) {
                     lastMessageTimestamp = messages[messages.length - 1].timestamp;
                 }
@@ -182,10 +188,13 @@
                 scrollToBottom();
                 
                 // Send message in the background
-                sendMessageToChatManager(message);
+                await chatManager.sendMessage(message);
             } catch (error) {
                 console.error('Error:', error);
-                errorMessage = 'Failed to update UI: ' + error.message;
+                errorMessage = 'Failed to send message: ' + error.message;
+
+                // Remove the optimistically added message
+                messages = messages.filter(msg => msg.objectID !== message.objectID);
             } finally {
                 isSending = false;
             }
@@ -219,16 +228,11 @@
             try {
                 await chatManager.editMessage(editMessageText, editMessageId);
                 console.log('Edit action sent successfully');
-                messages = messages.map(msg => 
-                    msg.objectID === editMessageId 
-                        ? {...msg, text: editMessageText} 
-                        : msg
-                );
                 editMessageText = '';
                 editMessageId = '';
             } catch (error) {
                 console.error('Error editing message:', error);
-                errorMessage = 'Failed to edit message.';
+                errorMessage = 'Failed to edit message: ' + error.message;
             }
         }
     }
@@ -238,24 +242,18 @@
             try {
                 await chatManager.deleteMessage(targetObjectID);
                 console.log('Delete action sent successfully');
-                messages = messages.filter(msg => msg.objectID !== targetObjectID);
             } catch (error) {
                 console.error('Error deleting message:', error);
-                errorMessage = 'Failed to delete message.';
+                errorMessage = 'Failed to delete message: ' + error.message;
             }
         }
     }
-  
+
     async function acknowledgeMessage(targetObjectID: string) {
         if (chatManager && targetObjectID.trim()) {
             try {
                 await chatManager.acknowledgeMessage(targetObjectID);
                 console.log('Acknowledge action sent successfully');
-                messages = messages.map(msg => 
-                    msg.objectID === targetObjectID 
-                        ? {...msg, acknowledgement: true} 
-                        : msg
-                );
             } catch (error) {
                 console.error('Error acknowledging message:', error);
                 errorMessage = 'Failed to acknowledge message.';
@@ -273,10 +271,12 @@
         editMessageText = currentText;
     }
   
-    onDestroy(() => {
+     onDestroy(() => {
         if (chatManager) {
             chatManager.offMessageSaved(handleNewMessage);
             chatManager.offMessagesUpdated(fetchAndUpdateMessages);
+            chatManager.offMessageDeleted(handleMessageDeleted);
+            chatManager.offMessageUpdated(handleMessageUpdated);
         }
         unsubscribeDarkMode();
     });
@@ -284,13 +284,28 @@
     function handleNewMessage(newMessage: ChatMessage) {
         if (newMessage.timestamp > lastMessageTimestamp) {
             // Check if the message already exists in the array
-            const messageExists = messages.some(msg => msg.objectID === newMessage.objectID);
-            if (!messageExists) {
-                messages = [...messages, newMessage]; // This will trigger reactivity
-                lastMessageTimestamp = newMessage.timestamp;
-                tick().then(scrollToBottom);
+            const existingMessageIndex = messages.findIndex(msg => msg.objectID === newMessage.objectID);
+            if (existingMessageIndex !== -1) {
+                // Update the existing message
+                messages[existingMessageIndex] = { ...messages[existingMessageIndex], ...newMessage };
+                messages = [...messages]; // Trigger reactivity
+            } else {
+                // Add the new message
+                messages = [...messages, newMessage];
             }
+            lastMessageTimestamp = newMessage.timestamp;
+            tick().then(scrollToBottom);
         }
+    }
+
+    function handleMessageDeleted(objectID: string) {
+        messages = messages.filter(msg => msg.objectID !== objectID);
+    }
+
+    function handleMessageUpdated(updatedMessage: ChatMessage) {
+        messages = messages.map(msg => 
+            msg.objectID === updatedMessage.objectID ? { ...msg, ...updatedMessage } : msg
+        );
     }
 
     function smoothScrollToBottom() {
@@ -309,7 +324,6 @@
     function toggleMessageActions(messageId: string) {
         selectedMessageId = selectedMessageId === messageId ? null : messageId;
     }
-
     // Function to get sender name (you might want to replace this with actual logic)
     function getSenderName(senderId: string) {
         return senderId === publicKeyA ? publicKeyA : publicKeyB;
@@ -987,6 +1001,8 @@
     background: linear-gradient(45deg, #7700ff, #00ffd5);
   }
 </style>
+
+
 
 
 

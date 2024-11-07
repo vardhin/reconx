@@ -42,6 +42,7 @@ class ChatManager {
     private chatHistoryFile: string;
     private fileContentHash: string | null = null;
     private eventEmitter: SimpleEventEmitter;
+    private uniqueMessageIds: Set<string> = new Set();
 
     constructor(publicKeyA: string, publicKeyB: string, localUserId: string) {
         this.roomId = this.getRoomId(publicKeyA, publicKeyB);
@@ -62,6 +63,16 @@ class ChatManager {
 
         this.listenToGun();
         this.pollChatHistoryChanges();
+
+        this.gun.get(this.roomId).map().on((data: ChatMessage, key: string) => {
+            if (data === null) {
+                // Message deleted
+                this.eventEmitter.emit('messageDeleted', key);
+            } else {
+                // Message updated or added
+                this.eventEmitter.emit('messageUpdated', { ...data, objectID: key });
+            }
+        });
     }
 
     // Sort public keys to form room ID
@@ -73,11 +84,39 @@ class ChatManager {
     private listenToGun() {
         const gunRoom = this.gun.get(this.roomId);
 
-        gunRoom.map().on(async (data: ChatMessage) => {
-            if (await this.isUniqueMessage(data)) {
-                await this.handleIncomingObject(data);
+        gunRoom.map().on(async (data: ChatMessage | null, key: string) => {
+            if (!data) {
+                // Handle deletion
+                await this.deleteMessageById(key);
+                this.eventEmitter.emit('messageDeleted', key);
+                return;
+            }
+
+            // Handle new messages, edits, and acknowledgments
+            const existingMessage = await this.fetchMessageById(key);
+            if (!existingMessage) {
+                // New message
+                if (data.type === 'message') {
+                    await this.appendMessageToHistory(data);
+                    this.eventEmitter.emit('messageSaved', data);
+                }
+            } else {
+                // Update existing message
+                const updatedMessage = { ...existingMessage, ...data };
+                await this.updateMessageInHistory(updatedMessage);
+                this.eventEmitter.emit('messageUpdated', updatedMessage);
             }
         });
+    }
+
+    // Add this new method to update a message in history
+    private async updateMessageInHistory(message: ChatMessage) {
+        const history = await this.readChatHistory();
+        const index = history.findIndex(msg => msg.objectID === message.objectID);
+        if (index !== -1) {
+            history[index] = message;
+            await this.writeChatHistory(history);
+        }
     }
 
     // Check if the message is unique
@@ -270,13 +309,13 @@ class ChatManager {
     // Edit message by target ID
     public async editMessageById(newText: string, targetID: string) {
         const history = await this.readChatHistory();
-        const message = history.find((msg) => msg.objectID === targetID);
-        if (message) {
-            message.text = newText;
+        const messageIndex = history.findIndex((msg) => msg.objectID === targetID);
+        if (messageIndex !== -1) {
+            history[messageIndex].text = newText;
             await this.writeChatHistory(history);
 
             // Update in Gun.js
-            this.gun.get(this.roomId).get(targetID).put({ ...message });
+            this.gun.get(this.roomId).get(targetID).put({ ...history[messageIndex] });
             console.log(`Message with ID ${targetID} edited successfully.`);
 
             // Emit update event
@@ -338,7 +377,24 @@ class ChatManager {
     // Edit a message using encapsulated method
     public async editMessage(newText: string, targetID: string): Promise<void> {
         try {
-            await this.editMessageById(newText, targetID);
+            const message = await this.fetchMessageById(targetID);
+            if (!message) throw new Error('Message not found');
+
+            const updatedMessage = {
+                ...message,
+                text: newText,
+                timestamp: Date.now() // Add timestamp for edit
+            };
+
+            // Update in Gun.js first
+            await new Promise<void>((resolve, reject) => {
+                this.gun.get(this.roomId).get(targetID).put(updatedMessage, (ack) => {
+                    if (ack.err) reject(new Error('Failed to edit message in Gun'));
+                    else resolve();
+                });
+            });
+
+            // Local update will happen through the Gun.js listener
         } catch (error) {
             console.error('Error editing message:', error);
             throw error;
@@ -348,7 +404,15 @@ class ChatManager {
     // Delete a message using encapsulated method
     public async deleteMessage(targetObjectID: string): Promise<void> {
         try {
-            await this.deleteMessageById(targetObjectID);
+            // Update in Gun.js first
+            await new Promise<void>((resolve, reject) => {
+                this.gun.get(this.roomId).get(targetObjectID).put(null, (ack) => {
+                    if (ack.err) reject(new Error('Failed to delete message in Gun'));
+                    else resolve();
+                });
+            });
+
+            // Local deletion will happen through the Gun.js listener
         } catch (error) {
             console.error('Error deleting message:', error);
             throw error;
@@ -358,15 +422,47 @@ class ChatManager {
     // Acknowledge a message using encapsulated method
     public async acknowledgeMessage(targetObjectID: string): Promise<void> {
         try {
-            await this.acknowledgeMessageById(targetObjectID);
+            const message = await this.fetchMessageById(targetObjectID);
+            if (!message) throw new Error('Message not found');
+
+            const updatedMessage = {
+                ...message,
+                acknowledgement: true,
+                timestamp: Date.now() // Add timestamp for acknowledgment
+            };
+
+            // Update in Gun.js first
+            await new Promise<void>((resolve, reject) => {
+                this.gun.get(this.roomId).get(targetObjectID).put(updatedMessage, (ack) => {
+                    if (ack.err) reject(new Error('Failed to acknowledge message in Gun'));
+                    else resolve();
+                });
+            });
+
+            // Local update will happen through the Gun.js listener
         } catch (error) {
             console.error('Error acknowledging message:', error);
             throw error;
         }
     }
 
-    // Optimized unique message handling
-    private uniqueMessageIds: Set<string> = new Set();
+    // Add methods to subscribe to the new events
+    public onMessageDeleted(callback: (objectID: string) => void) {
+        this.eventEmitter.on('messageDeleted', callback);
+    }
+
+    public onMessageUpdated(callback: (message: ChatMessage) => void) {
+        this.eventEmitter.on('messageUpdated', callback);
+    }
+
+    // Add methods to unsubscribe from the new events
+    public offMessageDeleted(callback: (objectID: string) => void) {
+        this.eventEmitter.off('messageDeleted', callback);
+    }
+
+    public offMessageUpdated(callback: (message: ChatMessage) => void) {
+        this.eventEmitter.off('messageUpdated', callback);
+    }
 }
 
 export default ChatManager;
